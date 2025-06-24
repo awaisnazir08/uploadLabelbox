@@ -4,6 +4,7 @@ import json
 from labelbox import Client
 from pathlib import Path
 from dotenv import load_dotenv
+import subprocess
 
 load_dotenv()
 
@@ -77,6 +78,10 @@ def upload_videos_with_csv_check(api_key, video_folder_path, inventory_csv_path)
     skipped_count = 0
     new_videos = []
     
+    # Create a temporary output folder for converted videos
+    converted_folder = Path('converted_videos')
+    converted_folder.mkdir(exist_ok=True)
+    
     for video_path in video_folder.rglob('*'):
         if video_path.suffix.lower() in video_extensions:
             video_count += 1
@@ -88,12 +93,29 @@ def upload_videos_with_csv_check(api_key, video_folder_path, inventory_csv_path)
                 print(f"Skipping {video_name} - already exists in dataset: {existing_info['dataset_name']}")
                 skipped_count += 1
                 continue
-            
+
+            # Convert video to Labelbox-compatible format
+            converted_path = converted_folder / video_name
+            command = [
+                'ffmpeg',
+                '-i', str(video_path),
+                '-vcodec', 'libx264',
+                '-acodec', 'aac',
+                '-movflags', '+faststart',
+                '-y',  # Overwrite output file if it exists
+                str(converted_path)
+            ]
+            print(f"Converting {video_name} to Labelbox-compatible format...")
+            result = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+            if result.returncode != 0 or not converted_path.exists():
+                print(f"Error converting {video_name}, skipping upload.")
+                continue
+
             try:
-                # Upload the video
+                # Upload the converted video
                 print(f"Uploading {video_name}...")
                 data_row = dataset.create_data_row(
-                    row_data=str(video_path.absolute()),
+                    row_data=str(converted_path.absolute()),
                     external_id=video_name
                 )
                 print(f"Successfully uploaded {video_name}")
@@ -105,9 +127,15 @@ def upload_videos_with_csv_check(api_key, video_folder_path, inventory_csv_path)
                     'data_row_id': data_row.uid,
                     'dataset_id': dataset.uid
                 })
-                
             except Exception as e:
                 print(f"Error uploading {video_name}: {str(e)}")
+            finally:
+                # Clean up the converted file
+                if converted_path.exists():
+                    try:
+                        converted_path.unlink()
+                    except Exception as cleanup_err:
+                        print(f"Warning: Could not delete temporary file {converted_path}: {cleanup_err}")
     
     # Update CSV with new videos
     if new_videos:

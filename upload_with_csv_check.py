@@ -85,52 +85,49 @@ def upload_videos_with_csv_check(api_key, video_folder_path, inventory_csv_path)
     for video_path in video_folder.rglob('*'):
         if video_path.suffix.lower() in video_extensions:
             video_count += 1
-            video_name = video_path.name
+            # Always use .mp4 for upload and inventory
+            converted_name = video_path.stem + '.mp4'
+            video_name = converted_name  # Use .mp4 name for external_id and CSV
             
-            # Check if video exists in inventory
+            # Check if video exists in inventory (by .mp4 name)
             if video_name in inventory:
                 existing_info = inventory[video_name]
                 print(f"Skipping {video_name} - already exists in dataset: {existing_info['dataset_name']}")
                 skipped_count += 1
                 continue
 
-            # Convert video to Labelbox-compatible format
-            converted_path = converted_folder / video_name
+            converted_path = converted_folder / converted_name
             command = [
                 'ffmpeg',
                 '-i', str(video_path),
                 '-vcodec', 'libx264',
                 '-acodec', 'aac',
                 '-movflags', '+faststart',
-                '-y',  # Overwrite output file if it exists
+                '-y',
                 str(converted_path)
             ]
-            print(f"Converting {video_name} to Labelbox-compatible format...")
+            print(f"Converting {video_path.name} to {converted_name} (Labelbox-compatible .mp4 format)...")
             result = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
             if result.returncode != 0 or not converted_path.exists():
-                print(f"Error converting {video_name}, skipping upload.")
+                print(f"Error converting {video_path.name}, skipping upload.")
                 continue
 
             try:
-                # Upload the converted video
                 print(f"Uploading {video_name}...")
                 data_row = dataset.create_data_row(
                     row_data=str(converted_path.absolute()),
                     external_id=video_name
                 )
                 print(f"Successfully uploaded {video_name}")
-                
-                # Add to new videos list for CSV update
                 new_videos.append({
                     'dataset_name': folder_name,
-                    'video_name': video_name,
+                    'video_name': video_name,  # Store .mp4 name in CSV
                     'data_row_id': data_row.uid,
                     'dataset_id': dataset.uid
                 })
             except Exception as e:
                 print(f"Error uploading {video_name}: {str(e)}")
             finally:
-                # Clean up the converted file
                 if converted_path.exists():
                     try:
                         converted_path.unlink()
